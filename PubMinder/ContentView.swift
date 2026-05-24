@@ -1,38 +1,39 @@
 import SwiftUI
-let backgroundGradient = LinearGradient(
-    colors: [Color.white, Color.blue],
-    startPoint: .top, endPoint: .bottom)
-let gradientColors: [Color] = [
-    .gradientTop,
-    .gradientBottom
-]
-import SwiftUI
 
+let gradientColors: [Color] = [.gradientTop, .gradientBottom]
 
 struct ContentView: View {
-    @Binding var selectedSubject: String
-    @Binding var summary: String
+    @Binding var summaries: [Article]
+    @Binding var isLoading: Bool
+    var selectedSubjects: Set<String>
+    var savedArticles: [Article]
+    var onSave: (Article) -> Void
+    var onRemove: (Article) -> Void
+    var onToggleSubject: (String) -> Void
+    var onRefresh: () -> Void
+
     var body: some View {
-        TabView() {
+        TabView {
             Tab("Summary", systemImage: "list.clipboard") {
-                SummaryPage(summaries: $summary)
+                SummaryPage(
+                    summaries: $summaries,
+                    isLoading: $isLoading,
+                    savedArticles: savedArticles,
+                    onSave: onSave
+                )
             }
-            Tab("Saved", systemImage: "square.and.arrow.down.on.square.fill") {
-                FeaturePage(selectedSubject: $selectedSubject)
-                    .frame(maxHeight: .infinity)
-                    .background(Gradient(colors: gradientColors))
-                    .foregroundStyle(.white)
+            Tab("Saved", systemImage: "bookmark.fill") {
+                SavedPage(savedArticles: savedArticles, onRemove: onRemove)
+            }
+            Tab("Settings", systemImage: "gearshape.fill") {
+                SettingsPage(
+                    selectedSubjects: selectedSubjects,
+                    onToggle: onToggleSubject,
+                    onRefresh: onRefresh,
+                    isLoading: isLoading
+                )
             }
         }
         .tabViewStyle(.sidebarAdaptable)
-    }
-}
-
-struct ContentView_Previews: PreviewProvider {
-    @State static var previewSelectedSubject = "bioinformatics"
-    @State static var previewSummary = "This is a sample summary text."
-
-    static var previews: some View {
-        ContentView(selectedSubject: $previewSelectedSubject, summary: $previewSummary)
     }
 }

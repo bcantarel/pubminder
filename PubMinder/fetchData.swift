@@ -6,87 +6,170 @@ import SwiftUI
 import FoundationNetworking
 #endif
 
-// Define a function to check if the summary contains relevant keywords
-func searchKeywords(in summary: String) -> Bool {
-    let keywords = ["genomics", "AI", "phenotype", "transcriptomics", "genotype", "bioinformatics", "gene", "expression", "regulation", "cranofacial", "size", "color", "coat"]
-    for keyword in keywords {
-        if summary.lowercased().contains(keyword.lowercased()) {
-            return true
-        }
+// Structured article type — title/doi/link come straight from the RSS feed,
+// summary is the only field that Groq touches.
+struct Article: Identifiable, Codable, Hashable {
+    let title:   String
+    let doi:     String   // empty string when not parseable
+    let link:    String
+    let summary: String
+
+    // Stable identity: prefer DOI, fall back to link
+    var id: String { doi.isEmpty ? link : doi }
+
+    // URL with a percent-encoding fallback for feeds that emit unencoded characters
+    var articleURL: URL? {
+        if let url = URL(string: link) { return url }
+        let encoded = link.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? link
+        return URL(string: encoded)
     }
-    return false
 }
 
-// Function to summarize text using an external service (Ollama API integration)
+// Reads the Groq API key the user entered in Settings.
+// Returns an empty string if not set, which will cause summarizeText to fail gracefully.
+var groqAPIKey: String {
+    UserDefaults.standard.string(forKey: "groqAPIKey") ?? ""
+}
+
+// Default keywords used on first launch before the user configures their own.
+let defaultKeywords = [
+    "genomics", "AI", "transcriptomics",
+    "bioinformatics", "gene", "expression", "regulation"
+]
+
+// Returns true if the article abstract passes the keyword filter.
+// Reads filter settings from UserDefaults so the user can configure them in Settings.
+func searchKeywords(in text: String) -> Bool {
+    let filterEnabled = UserDefaults.standard.object(forKey: "filterKeywordsEnabled") as? Bool ?? true
+    guard filterEnabled else { return true }
+
+    let stored = UserDefaults.standard.string(forKey: "filterKeywordsRaw") ?? ""
+    let keywords: [String]
+    if stored.isEmpty {
+        keywords = defaultKeywords
+    } else {
+        keywords = (try? JSONDecoder().decode([String].self, from: Data(stored.utf8))) ?? defaultKeywords
+    }
+
+    guard !keywords.isEmpty else { return true }
+    return keywords.contains { text.lowercased().contains($0.lowercased()) }
+}
+
+// Extract a DOI from a bioRxiv/medRxiv URL.
+// URL format: https://www.biorxiv.org/content/10.XXXX/YYYYv1?rss=1
+func extractDOI(from link: String) -> String {
+    guard let contentRange = link.range(of: "/content/") else { return "" }
+    var doi = String(link[contentRange.upperBound...])
+    if let qRange = doi.range(of: "?") { doi = String(doi[..<qRange.lowerBound]) }
+    if let vMatch = doi.range(of: #"v\d+$"#, options: .regularExpression) {
+        doi = String(doi[..<vMatch.lowerBound])
+    }
+    return doi
+}
+
+// Summarize an abstract via Groq. Only the abstract text is sent — no title, no metadata.
 func summarizeText(inputText: String, completion: @escaping (String?) -> Void) {
-    let url = URL(string: "https://api.ollama.ai/summarize")!
+    let key = groqAPIKey
+    guard !key.isEmpty else {
+        print("Groq API key not set. Enter your key in Settings.")
+        completion(nil); return
+    }
+    guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else {
+        completion(nil); return
+    }
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.addValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
 
-    let prompt = "Summarize the following: \(inputText)"
     let payload: [String: Any] = [
-        "model": "mistral-small",
+        "model": "llama-3.3-70b-versatile",
         "temperature": 0,
         "messages": [
-            ["role": "system", "content": "You are a graduate research assistant that summarizes scientific information for your peers in 1 or 2 sentences"],
-            ["role": "user", "content": prompt]
+            ["role": "system", "content": "You are a graduate research assistant. Summarize the following scientific abstract for your peers in 2–3 sentences. Be specific about the key finding."],
+            ["role": "user", "content": inputText]
         ]
     ]
-    
+
     guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else {
-        completion(nil)
-        return
+        completion(nil); return
     }
     request.httpBody = jsonData
 
-    let task = URLSession.shared.dataTask(with: request) { data, response, error in
+    URLSession.shared.dataTask(with: request) { data, _, error in
         guard let data = data, error == nil else {
-            print("Error during summarization: \(error?.localizedDescription ?? "Unknown error")")
-            completion(nil)
-            return
+            print("Groq error: \(error?.localizedDescription ?? "unknown")")
+            completion(nil); return
         }
-        if let jsonResponse = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-           let choices = jsonResponse["choices"] as? [[String: Any]],
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let choices = json["choices"] as? [[String: Any]],
            let message = choices.first?["message"] as? [String: Any],
            let content = message["content"] as? String {
             completion(content)
         } else {
+            print("Unexpected Groq response: \(String(data: data, encoding: .utf8) ?? "unreadable")")
             completion(nil)
         }
-    }
-    task.resume()
+    }.resume()
 }
 
-// Function to fetch and parse RSS feeds using FeedKit
-func fetchAndSummarizeRSSFeed(feedURL: String, completion: @escaping (String?) -> Void) {
-    guard let url = URL(string: feedURL) else { return }
+// Fetch and parse an RSS feed, summarize matching articles via Groq.
+// Title, DOI, and link are read directly from the RSS item fields.
+// Only the abstract (item.description) is sent to Groq.
+// - onArticle: called once per completed Article
+// - onDone:    called once when all articles for this feed are processed
+func fetchAndSummarizeRSSFeed(feedURL: String,
+                               onArticle: @escaping (Article) -> Void,
+                               onDone: @escaping () -> Void) {
+    guard let url = URL(string: feedURL) else { onDone(); return }
     let parser = FeedParser(URL: url)
 
     parser.parseAsync { result in
         switch result {
         case .success(let feed):
-            if let rssFeed = feed.rssFeed {
-                var count = 0
-                for item in rssFeed.items ?? [] {
-                    guard let content = item.description else { continue }
-                    if !searchKeywords(in: content) { continue }
+            guard let rssFeed = feed.rssFeed else { onDone(); return }
 
-                    count += 1
-                    if count > 3 { break }
+            // Collect up to 3 items whose abstract matches the keyword filter
+            var candidates: [(title: String, link: String, doi: String, abstract: String)] = []
+            for item in rssFeed.items ?? [] {
+                guard let abstract = item.description else { continue }
+                guard searchKeywords(in: abstract) else { continue }
+                // bioRxiv sometimes puts the article URL in <guid> rather than <link>.
+                // Trim whitespace/newlines that RSS parsers occasionally leave in the field —
+                // a single stray space causes URL(string:) to return nil.
+                let link = (item.link ?? item.guid?.value ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                print("RSS item — title: \(item.title ?? "nil"), link: '\(link)'")
+                candidates.append((
+                    title:    item.title ?? "Untitled",
+                    link:     link,
+                    doi:      extractDOI(from: link),
+                    abstract: abstract
+                ))
+                if candidates.count >= 3 { break }
+            }
 
-                    summarizeText(inputText: content) { summary in
-                        guard let summary = summary else {
-                            print("An error occurred while generating the summary.")
-                            return
-                        }
-                        let info = "Title: \(item.title ?? "No title")\nLink: \(item.link ?? "No link")\nSummary: \(summary)"
-                        completion(info)
-                    }
+            guard !candidates.isEmpty else { onDone(); return }
+
+            var remaining = candidates.count
+            for candidate in candidates {
+                // Send only the abstract to Groq — title and metadata stay from RSS
+                summarizeText(inputText: candidate.abstract) { summary in
+                    let article = Article(
+                        title:   candidate.title,
+                        doi:     candidate.doi,
+                        link:    candidate.link,
+                        summary: summary ?? "Summary unavailable."
+                    )
+                    onArticle(article)
+                    remaining -= 1
+                    if remaining == 0 { onDone() }
                 }
             }
+
         case .failure(let error):
-            print("Failed to parse RSS feed: \(error.localizedDescription)")
+            print("RSS parse error: \(error.localizedDescription)")
+            onDone()
         }
     }
 }

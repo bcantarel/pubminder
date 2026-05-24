@@ -1,100 +1,159 @@
 import SwiftUI
 
 struct SummaryPage: View {
-    @Binding var summaries: String
+    @Binding var summaries: [Article]
+    @Binding var isLoading: Bool
+    var savedArticles: [Article]
+    var onSave: (Article) -> Void
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        
-                        // Feed Management Section
-                        HStack {
-                            Button(action: {
-                                // Action to organize feeds
-                            }) {
-                                Image(systemName: "list.bullet")
-                                    .font(.system(size: 24))
-                                Text("Organize Feeds")
-                            }
-                        }
-                        .padding(.horizontal)
-
-                        ForEach(summaries, id: \.self) { summary in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Summary")
-                                    .font(.title)
-                                    .bold()
-                                Text(summary)
-                                    .font(.body)
-                                    .foregroundColor(.gray)
-                            }
-                            .padding()
-                            .background(Color(.systemGray6))
-                            .cornerRadius(10)
+            Group {
+                if isLoading && summaries.isEmpty {
+                    VStack(spacing: 12) {
+                        ProgressView().scaleEffect(1.4)
+                        Text("Fetching papers…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if summaries.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+                        Text("No papers loaded yet")
+                            .font(.title3).bold()
+                        Text("Go to Settings, select subjects, and tap Refresh Feed.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                             .padding(.horizontal)
-                        }
-                        
-                        // Save, Share, Bookmark buttons
-                        HStack {
-                            Button(action: {
-                                // Save action
-                            }) {
-                                Image(systemName: "bookmark")
-                                    .font(.system(size: 24))
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            if isLoading {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text("Loading more…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.top, 4)
                             }
-                            Spacer()
-                            Button(action: {
-                                // Share action
-                            }) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 24))
-                            }
-                            Spacer()
-                            Button(action: {
-                                // Bookmark action
-                            }) {
-                                Image(systemName: "star")
-                                    .font(.system(size: 24))
+                            ForEach(summaries) { article in
+                                ArticleCard(
+                                    article: article,
+                                    isSaved: savedArticles.contains(article),
+                                    onSave: { onSave(article) }
+                                )
                             }
                         }
-                        .padding(.top)
+                        .padding(.vertical)
                     }
                 }
             }
             .navigationTitle("Research Assistant")
-            .background(Gradient(colors: gradientColors))
-            .foregroundStyle(Color(uiColor: UIColor.red))
         }
     }
 }
 
+struct ArticleCard: View {
+    let article: Article
+    let isSaved: Bool
+    let onSave: () -> Void
 
-// Placeholder views for navigation
-struct HomeView: View {
     var body: some View {
-        Text("Home")
+        VStack(alignment: .leading, spacing: 10) {
+
+            // Title row + bookmark button
+            HStack(alignment: .top, spacing: 8) {
+                Text(article.title.isEmpty ? "Untitled" : article.title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(action: onSave) {
+                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                        .font(.system(size: 20))
+                        .foregroundStyle(isSaved ? Color.blue : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(isSaved)
+            }
+
+            Divider()
+
+            // DOI
+            if !article.doi.isEmpty {
+                LabeledRow(icon: "number", label: "DOI", value: article.doi)
+            }
+
+            // Link (tappable)
+            if let url = article.articleURL {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "link")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                    Link(article.link, destination: url)
+                        .font(.caption)
+                        .foregroundStyle(Color.linkBlue)
+                        .lineLimit(2)
+                }
+            }
+
+            // Summary
+            if !article.summary.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Summary")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    Text(article.summary)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding()
+        .background(Color(uiColor: .secondarySystemBackground))
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+        .padding(.horizontal)
     }
 }
 
-struct FeedsView: View {
+struct LabeledRow: View {
+    let icon: String
+    let label: String
+    let value: String
+
     var body: some View {
-        Text("Feeds")
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
-struct SavedView: View {
-    var body: some View {
-        Text("Saved")
-    }
-}
-
-struct ProfileView: View {
-    var body: some View {
-        Text("Profile")
-    }
-}
 #Preview {
-    @Previewable @State var previewSummary = "This is a sample summary text."
-    SummaryPage(summaries: $previewSummary)
+    @Previewable @State var summaries: [Article] = [
+        Article(
+            title: "Evolutionary Histories Shape Oral Microbiomes",
+            doi: "10.64898/2026.05.20.726600",
+            link: "https://www.biorxiv.org/content/10.64898/2026.05.20.726600v1",
+            summary: "This study compares oral microbiomes across hunter-gatherer and industrialized populations, finding that geography and subsistence practices significantly influence diversity."
+        )
+    ]
+    @Previewable @State var loading = false
+    SummaryPage(summaries: $summaries, isLoading: $loading, savedArticles: [], onSave: { _ in })
 }
