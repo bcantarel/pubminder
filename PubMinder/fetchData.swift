@@ -157,7 +157,7 @@ func summarizeWithGroq(inputText: String) async -> String? {
 // Tries on-device Apple Intelligence first (iOS 18+, eligible hardware).
 // Falls back to Groq automatically — no callbacks, just await and get the result.
 func summarizeText(inputText: String) async -> String? {
-    if #available(iOS 18.0, *) {
+    if #available(iOS 26.0, *) {
         if let result = await summarizeWithAppleAI(inputText: inputText) {
             return result
         }
