@@ -110,9 +110,10 @@ struct SettingsPage: View {
     var onRefresh: () -> Void
     var isLoading: Bool
 
-    @AppStorage("groqAPIKey")           private var groqAPIKey: String = ""
+    @AppStorage("groqAPIKey")            private var groqAPIKey: String = ""
     @AppStorage("filterKeywordsEnabled") private var filterEnabled: Bool = true
-    @AppStorage("filterKeywordsRaw")    private var keywordsRaw: String = ""
+    @AppStorage("filterKeywordsRaw")     private var keywordsRaw: String = ""
+    @AppStorage("articlesPerSubject")    private var articlesPerSubject: Int = 3
 
     @State private var isKeyVisible: Bool = false
     @State private var newKeyword: String = ""
@@ -250,7 +251,29 @@ struct SettingsPage: View {
                     if filterEnabled {
                         Text("Only articles whose title or abstract contain at least one of these keywords will be fetched and summarized. Swipe left on a keyword to delete it. Tap the + to add your own.")
                     } else {
-                        Text("Keyword filtering is off — all articles from selected subjects will be summarized (up to 3 per feed).")
+                        Text("Keyword filtering is off — all articles from selected subjects will be summarized (up to the Feed Size limit per subject).")
+                    }
+                }
+
+                // ── Articles per subject ───────────────────────────────────
+                Section {
+                    Stepper(value: $articlesPerSubject, in: 1...20) {
+                        HStack {
+                            Text("Articles per subject")
+                            Spacer()
+                            Text("\(articlesPerSubject)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
+                } header: {
+                    Text("Feed Size")
+                } footer: {
+                    let total = selectedSubjects.isEmpty ? 0 : selectedSubjects.count * articlesPerSubject
+                    if selectedSubjects.isEmpty {
+                        Text("Select subjects below, then set how many articles to fetch per subject.")
+                    } else {
+                        Text("Up to \(articlesPerSubject) article\(articlesPerSubject == 1 ? "" : "s") × \(selectedSubjects.count) subject\(selectedSubjects.count == 1 ? "" : "s") = \(total) articles per refresh. Higher numbers take longer and use more API calls.")
                     }
                 }
 

@@ -64,28 +64,38 @@ struct PubMinderApp: App {
         let subjects = Array(selectedSubjects)
         guard !subjects.isEmpty else { isLoading = false; return }
 
-        var pending = subjects.count
+        Task {
+            // All feeds are fetched and summarized in parallel.
+            // As each subject finishes, its articles are appended to the UI immediately.
+            await withTaskGroup(of: [Article].self) { group in
+                for subjectID in subjects {
+                    let parts = subjectID.split(separator: ":", maxSplits: 1).map(String.init)
+                    let source = parts.first ?? "biorxiv"
+                    let slug   = parts.last  ?? subjectID
 
-        for subjectID in subjects {
-            let parts = subjectID.split(separator: ":", maxSplits: 1).map(String.init)
-            let source = parts.first ?? "biorxiv"
-            let slug   = parts.last  ?? subjectID
+                    let feedURL: String
+                    switch source {
+                    case "medrxiv":
+                        feedURL = "https://connect.medrxiv.org/medrxiv_xml.php?subject=" + slug
+                    default:
+                        feedURL = "https://connect.biorxiv.org/biorxiv_xml.php?subject=" + slug
+                    }
 
-            let feedURL: String
-            switch source {
-            case "medrxiv":
-                feedURL = "https://connect.medrxiv.org/medrxiv_xml.php?subject=" + slug
-            default:
-                feedURL = "https://connect.biorxiv.org/biorxiv_xml.php?subject=" + slug
+                    group.addTask {
+                        await fetchAndSummarizeRSSFeed(feedURL: feedURL)
+                    }
+                }
+
+                // Each subject's batch of articles arrives as soon as that feed is done.
+                for await articles in group {
+                    await MainActor.run {
+                        summaries.append(contentsOf: articles)
+                    }
+                }
             }
 
-            fetchAndSummarizeRSSFeed(feedURL: feedURL) { article in
-                DispatchQueue.main.async { summaries.append(article) }
-            } onDone: {
-                DispatchQueue.main.async {
-                    pending -= 1
-                    if pending == 0 { isLoading = false }
-                }
+            await MainActor.run {
+                isLoading = false
             }
         }
     }

@@ -6,6 +6,10 @@ import SwiftUI
 import FoundationNetworking
 #endif
 
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
+
 // Structured article type — title/doi/link come straight from the RSS feed,
 // summary is the only field that Groq touches.
 struct Article: Identifiable, Codable, Hashable {
@@ -67,16 +71,54 @@ func extractDOI(from link: String) -> String {
     return doi
 }
 
-// Summarize an abstract via Groq. Only the abstract text is sent — no title, no metadata.
-func summarizeText(inputText: String, completion: @escaping (String?) -> Void) {
+// The system prompt shared by both AI backends.
+private let summarizationSystemPrompt = "You are a graduate research assistant. Summarize the following scientific abstract for your peers in 2–3 sentences. Be specific about the key finding."
+
+// MARK: - Apple Intelligence (on-device, iOS 18+)
+
+// Tries to summarize using the on-device Foundation Models framework.
+// Returns nil if Apple Intelligence is unavailable or the device isn't eligible,
+// so the caller can fall back to Groq.
+@available(iOS 26.0, *)
+func summarizeWithAppleAI(inputText: String) async -> String? {
+    let model = SystemLanguageModel.default
+    guard model.availability == .available else {
+        switch model.availability {
+        case .unavailable(.deviceNotEligible):
+            print("Apple AI: device not eligible (requires A17 Pro / M1 or later).")
+        case .unavailable(.appleIntelligenceNotEnabled):
+            print("Apple AI: Apple Intelligence is off — enable it in Settings → Apple Intelligence.")
+        case .unavailable(.modelNotReady):
+            print("Apple AI: model is still downloading, will retry next time.")
+        default:
+            print("Apple AI: unavailable.")
+        }
+        return nil
+    }
+
+    let session = LanguageModelSession(instructions: summarizationSystemPrompt)
+    do {
+        let response = try await session.respond(to: inputText)
+        print("Apple AI: summarized successfully (on-device).")
+        return response.content
+    } catch {
+        print("Apple AI error: \(error.localizedDescription)")
+        return nil
+    }
+}
+
+// MARK: - Groq (cloud fallback)
+
+// Summarize via the Groq API (llama-3.3-70b). Used when Apple Intelligence
+// is unavailable or on older devices. Fully async — no callbacks.
+func summarizeWithGroq(inputText: String) async -> String? {
     let key = groqAPIKey
     guard !key.isEmpty else {
         print("Groq API key not set. Enter your key in Settings.")
-        completion(nil); return
+        return nil
     }
-    guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else {
-        completion(nil); return
-    }
+    guard let url = URL(string: "https://api.groq.com/openai/v1/chat/completions") else { return nil }
+
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -86,90 +128,113 @@ func summarizeText(inputText: String, completion: @escaping (String?) -> Void) {
         "model": "llama-3.3-70b-versatile",
         "temperature": 0,
         "messages": [
-            ["role": "system", "content": "You are a graduate research assistant. Summarize the following scientific abstract for your peers in 2–3 sentences. Be specific about the key finding."],
+            ["role": "system", "content": summarizationSystemPrompt],
             ["role": "user", "content": inputText]
         ]
     ]
 
-    guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else {
-        completion(nil); return
-    }
+    guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
     request.httpBody = jsonData
 
-    URLSession.shared.dataTask(with: request) { data, _, error in
-        guard let data = data, error == nil else {
-            print("Groq error: \(error?.localizedDescription ?? "unknown")")
-            completion(nil); return
-        }
+    do {
+        let (data, _) = try await URLSession.shared.data(for: request)
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let choices = json["choices"] as? [[String: Any]],
            let message = choices.first?["message"] as? [String: Any],
            let content = message["content"] as? String {
-            completion(content)
-        } else {
-            print("Unexpected Groq response: \(String(data: data, encoding: .utf8) ?? "unreadable")")
-            completion(nil)
+            return content
         }
-    }.resume()
+        print("Unexpected Groq response: \(String(data: data, encoding: .utf8) ?? "unreadable")")
+        return nil
+    } catch {
+        print("Groq error: \(error.localizedDescription)")
+        return nil
+    }
 }
 
-// Fetch and parse an RSS feed, summarize matching articles via Groq.
-// Title, DOI, and link are read directly from the RSS item fields.
-// Only the abstract (item.description) is sent to Groq.
-// - onArticle: called once per completed Article
-// - onDone:    called once when all articles for this feed are processed
-func fetchAndSummarizeRSSFeed(feedURL: String,
-                               onArticle: @escaping (Article) -> Void,
-                               onDone: @escaping () -> Void) {
-    guard let url = URL(string: feedURL) else { onDone(); return }
+// MARK: - Smart router: Apple AI first, Groq fallback
+
+// Tries on-device Apple Intelligence first (iOS 18+, eligible hardware).
+// Falls back to Groq automatically — no callbacks, just await and get the result.
+func summarizeText(inputText: String) async -> String? {
+    if #available(iOS 18.0, *) {
+        if let result = await summarizeWithAppleAI(inputText: inputText) {
+            return result
+        }
+    }
+    return await summarizeWithGroq(inputText: inputText)
+}
+
+// MARK: - RSS fetch + parallel summarization
+
+// Fetch one RSS feed and summarize all matching articles in parallel using TaskGroup.
+// Returns the finished [Article] array when every summary is done.
+// The old callback-based version had a race condition on the `remaining` counter
+// (decremented from multiple background threads). TaskGroup eliminates that entirely.
+func fetchAndSummarizeRSSFeed(feedURL: String) async -> [Article] {
+    guard let url = URL(string: feedURL) else { return [] }
     let parser = FeedParser(URL: url)
 
-    parser.parseAsync { result in
-        switch result {
-        case .success(let feed):
-            guard let rssFeed = feed.rssFeed else { onDone(); return }
+    // FeedParser uses callbacks internally, so we bridge it to async/await with
+    // withCheckedContinuation — this suspends until the parser calls back, then resumes.
+    let candidates: [(title: String, link: String, doi: String, abstract: String)] =
+        await withCheckedContinuation { continuation in
+            parser.parseAsync { result in
+                switch result {
+                case .success(let feed):
+                    guard let rssFeed = feed.rssFeed else {
+                        continuation.resume(returning: [])
+                        return
+                    }
+                    let stored = UserDefaults.standard.integer(forKey: "articlesPerSubject")
+                    let articleLimit = stored > 0 ? stored : 3
+                    var found: [(title: String, link: String, doi: String, abstract: String)] = []
+                    for item in rssFeed.items ?? [] {
+                        guard let abstract = item.description else { continue }
+                        guard searchKeywords(in: abstract) else { continue }
+                        // bioRxiv sometimes puts the article URL in <guid> rather than <link>.
+                        // Trim whitespace/newlines that RSS parsers occasionally leave in the field.
+                        let link = (item.link ?? item.guid?.value ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        print("RSS item — title: \(item.title ?? "nil"), link: '\(link)'")
+                        found.append((
+                            title:    item.title ?? "Untitled",
+                            link:     link,
+                            doi:      extractDOI(from: link),
+                            abstract: abstract
+                        ))
+                        if found.count >= articleLimit { break }
+                    }
+                    continuation.resume(returning: found)
 
-            // Collect up to 3 items whose abstract matches the keyword filter
-            var candidates: [(title: String, link: String, doi: String, abstract: String)] = []
-            for item in rssFeed.items ?? [] {
-                guard let abstract = item.description else { continue }
-                guard searchKeywords(in: abstract) else { continue }
-                // bioRxiv sometimes puts the article URL in <guid> rather than <link>.
-                // Trim whitespace/newlines that RSS parsers occasionally leave in the field —
-                // a single stray space causes URL(string:) to return nil.
-                let link = (item.link ?? item.guid?.value ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                print("RSS item — title: \(item.title ?? "nil"), link: '\(link)'")
-                candidates.append((
-                    title:    item.title ?? "Untitled",
-                    link:     link,
-                    doi:      extractDOI(from: link),
-                    abstract: abstract
-                ))
-                if candidates.count >= 3 { break }
-            }
-
-            guard !candidates.isEmpty else { onDone(); return }
-
-            var remaining = candidates.count
-            for candidate in candidates {
-                // Send only the abstract to Groq — title and metadata stay from RSS
-                summarizeText(inputText: candidate.abstract) { summary in
-                    let article = Article(
-                        title:   candidate.title,
-                        doi:     candidate.doi,
-                        link:    candidate.link,
-                        summary: summary ?? "Summary unavailable."
-                    )
-                    onArticle(article)
-                    remaining -= 1
-                    if remaining == 0 { onDone() }
+                case .failure(let error):
+                    print("RSS parse error: \(error.localizedDescription)")
+                    continuation.resume(returning: [])
                 }
             }
-
-        case .failure(let error):
-            print("RSS parse error: \(error.localizedDescription)")
-            onDone()
         }
+
+    guard !candidates.isEmpty else { return [] }
+
+    // Summarize every candidate at the same time. TaskGroup launches all the
+    // summarizeText calls concurrently and waits for all of them to finish before
+    // returning — no manual `remaining` counter, no race conditions.
+    return await withTaskGroup(of: Article.self) { group in
+        for candidate in candidates {
+            group.addTask {
+                let summary = await summarizeText(inputText: candidate.abstract)
+                return Article(
+                    title:   candidate.title,
+                    doi:     candidate.doi,
+                    link:    candidate.link,
+                    summary: summary ?? "Summary unavailable."
+                )
+            }
+        }
+        var articles: [Article] = []
+        for await article in group {
+            articles.append(article)
+        }
+        return articles
     }
 }
