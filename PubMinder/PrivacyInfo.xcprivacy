@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        NSPrivacyTracking: false — PubMinder does not track users across apps
+        or websites for advertising or data broker purposes.
+    -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <!-- No tracking domains. -->
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <!--
+        NSPrivacyCollectedDataTypes: PubMinder does not collect any data that
+        leaves the device and is linked to the user's identity. The Groq API
+        key is user-supplied and transmitted only to Groq's servers per the
+        user's explicit intent. Scientific abstracts sent to Groq for
+        summarization are not personal data.
+    -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <!--
+        NSPrivacyAccessedAPITypes: required reason declarations for APIs that
+        Apple classifies as "required reason APIs".
+
+        UserDefaults (NSUserDefaults) — used to store app preferences:
+        selected subjects, keyword filters, feed size, onboarding flag,
+        saved articles, and PubMed search queries.
+        Reason CA92LXYZ: read/write the app's own defaults (not for tracking).
+    -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92LXYZ</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

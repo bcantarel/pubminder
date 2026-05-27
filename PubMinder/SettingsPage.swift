@@ -13,6 +13,8 @@ struct FeedSubject: Identifiable, Hashable {
         switch source {
         case "medrxiv":
             return "https://connect.medrxiv.org/medrxiv_xml.php?subject=\(slug)"
+        case "arxiv":
+            return "https://export.arxiv.org/api/query?search_query=cat:\(slug)&sortBy=submittedDate&sortOrder=descending"
         default:
             return "https://connect.biorxiv.org/biorxiv_xml.php?subject=\(slug)"
         }
@@ -104,19 +106,47 @@ private let medRxivSubjects: [FeedSubject] = [
     FeedSubject(source: "medrxiv", slug: "urology",                                        displayName: "Urology"),
 ]
 
+private let arxivSubjects: [FeedSubject] = [
+    FeedSubject(source: "arxiv", slug: "cs.AI",    displayName: "CS — Artificial Intelligence"),
+    FeedSubject(source: "arxiv", slug: "cs.LG",    displayName: "CS — Machine Learning"),
+    FeedSubject(source: "arxiv", slug: "cs.CV",    displayName: "CS — Computer Vision"),
+    FeedSubject(source: "arxiv", slug: "cs.CL",    displayName: "CS — Computation & Language"),
+    FeedSubject(source: "arxiv", slug: "cs.NE",    displayName: "CS — Neural & Evolutionary Computing"),
+    FeedSubject(source: "arxiv", slug: "math",     displayName: "Mathematics"),
+    FeedSubject(source: "arxiv", slug: "cond-mat", displayName: "Physics — Condensed Matter"),
+    FeedSubject(source: "arxiv", slug: "hep-ph",   displayName: "Physics — High Energy"),
+    FeedSubject(source: "arxiv", slug: "quant-ph", displayName: "Physics — Quantum Physics"),
+    FeedSubject(source: "arxiv", slug: "stat.ML",  displayName: "Statistics — ML"),
+    FeedSubject(source: "arxiv", slug: "q-bio",    displayName: "Quantitative Biology"),
+]
+
 struct SettingsPage: View {
     var selectedSubjects: Set<String>
     var onToggle: (String) -> Void
     var onRefresh: () -> Void
     var isLoading: Bool
 
-    @AppStorage("groqAPIKey")            private var groqAPIKey: String = ""
+    // API keys are stored in the Keychain (not UserDefaults) for security.
+    // @State is loaded once from Keychain in .onAppear; writes go back on .onChange.
+    @State private var groqAPIKey: String = ""
+    @State private var pubmedAPIKey: String = ""
+
     @AppStorage("filterKeywordsEnabled") private var filterEnabled: Bool = true
     @AppStorage("filterKeywordsRaw")     private var keywordsRaw: String = ""
     @AppStorage("articlesPerSubject")    private var articlesPerSubject: Int = 3
+    @AppStorage("pubmedSearchesV2")      private var pubmedSearchesV2Raw: String = ""
+    @AppStorage("pubmedSearchesRaw")     private var pubmedSearchesLegacyRaw: String = ""   // read-only for migration
 
     @State private var isKeyVisible: Bool = false
     @State private var newKeyword: String = ""
+    @State private var newPubMedSearch: String = ""
+    @State private var subjectSearch: String = ""
+
+    // Returns only subjects whose display name matches the search string (or all if empty)
+    private func filtered(_ subjects: [FeedSubject]) -> [FeedSubject] {
+        guard !subjectSearch.isEmpty else { return subjects }
+        return subjects.filter { $0.displayName.localizedCaseInsensitiveContains(subjectSearch) }
+    }
 
     // Decode the stored JSON array, falling back to defaults on first launch
     private var keywords: [String] {
@@ -149,15 +179,72 @@ struct SettingsPage: View {
         saveKeywords(list)
     }
 
+    // ── PubMed search helpers ──────────────────────────────────────────────
+
+    /// Loads [PubMedSearch] from V2 storage, migrating from the old [String] format if needed.
+    private var pubmedSearches: [PubMedSearch] {
+        // V2 storage has data — decode it directly
+        if !pubmedSearchesV2Raw.isEmpty,
+           let decoded = try? JSONDecoder().decode([PubMedSearch].self, from: Data(pubmedSearchesV2Raw.utf8)) {
+            return decoded
+        }
+        // V2 empty — try to migrate from legacy [String] storage
+        if !pubmedSearchesLegacyRaw.isEmpty,
+           let oldList = try? JSONDecoder().decode([String].self, from: Data(pubmedSearchesLegacyRaw.utf8)) {
+            let migrated = oldList.map { PubMedSearch(query: $0) }
+            savePubMedSearches(migrated)   // write into V2 so we only migrate once
+            return migrated
+        }
+        return []
+    }
+
+    private func savePubMedSearches(_ list: [PubMedSearch]) {
+        if let data = try? JSONEncoder().encode(list),
+           let str = String(data: data, encoding: .utf8) {
+            pubmedSearchesV2Raw = str
+        }
+    }
+
+    private func addPubMedSearch() {
+        let trimmed = newPubMedSearch.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty,
+              !pubmedSearches.contains(where: { $0.query.lowercased() == trimmed.lowercased() }) else {
+            newPubMedSearch = ""
+            return
+        }
+        savePubMedSearches(pubmedSearches + [PubMedSearch(query: trimmed)])
+        newPubMedSearch = ""
+    }
+
+    private func removePubMedSearch(at offsets: IndexSet) {
+        var list = pubmedSearches
+        list.remove(atOffsets: offsets)
+        savePubMedSearches(list)
+    }
+
+    /// Returns a Binding to a single PubMedSearch that writes back to storage on change.
+    private func bindingFor(index i: Int) -> Binding<PubMedSearch> {
+        Binding(
+            get: { pubmedSearches[i] },
+            set: { updated in
+                var list = pubmedSearches
+                list[i] = updated
+                savePubMedSearches(list)
+            }
+        )
+    }
+
+    // ── Refresh guard ──────────────────────────────────────────────────────
+
     private var canRefresh: Bool {
-        !groqAPIKey.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !selectedSubjects.isEmpty &&
-        !isLoading
+        let hasSource = !selectedSubjects.isEmpty || !pubmedSearches.isEmpty
+        return hasAISummarization() && hasSource && !isLoading
     }
 
     var body: some View {
         NavigationView {
             List {
+                // Note: API key state is loaded from Keychain in .onAppear below.
 
                 // ── API Key ────────────────────────────────────────────────
                 Section {
@@ -277,18 +364,68 @@ struct SettingsPage: View {
                     }
                 }
 
+                // ── PubMed searches ────────────────────────────────────────
+                Section {
+                    // Saved searches with per-search filter pickers
+                    ForEach(pubmedSearches.indices, id: \.self) { i in
+                        PubMedSearchRow(search: bindingFor(index: i))
+                    }
+                    .onDelete(perform: removePubMedSearch)
+
+                    // Add new search query
+                    HStack {
+                        TextField("e.g. CRISPR, genomics[MeSH] AND cancer", text: $newPubMedSearch)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .onSubmit { addPubMedSearch() }
+                        Button(action: addPubMedSearch) {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundStyle(
+                                    newPubMedSearch.trimmingCharacters(in: .whitespaces).isEmpty
+                                    ? Color.blue.opacity(0.3) : Color.blue
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(newPubMedSearch.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+
+                    // Optional NCBI API key (raises rate limit from 3 → 10 req/sec)
+                    DisclosureGroup("NCBI API Key (optional)") {
+                        TextField("Paste key here…", text: $pubmedAPIKey)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .font(.system(.body, design: .monospaced))
+                            .padding(.vertical, 2)
+                        Text("Register free at ncbi.nlm.nih.gov/account to get a key. Without one, PubMed allows 3 requests/sec — plenty for personal use.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("PubMed Searches")
+                } footer: {
+                    Text("Enter keyword queries or MeSH terms. Use the date and type menus to narrow each search. Swipe left on a query to delete it.")
+                        .font(.footnote)
+                }
+
+                // ── arXiv subjects ─────────────────────────────────────────
+                subjectSection(
+                    title: "arXiv Subjects",
+                    footer: "Physics, mathematics, and computer science preprints from arxiv.org",
+                    subjects: filtered(arxivSubjects)
+                )
+
                 // ── bioRxiv subjects ───────────────────────────────────────
                 subjectSection(
                     title: "bioRxiv Subjects",
                     footer: "Biological and life science preprints from biorxiv.org",
-                    subjects: bioRxivSubjects
+                    subjects: filtered(bioRxivSubjects)
                 )
 
                 // ── medRxiv subjects ───────────────────────────────────────
                 subjectSection(
                     title: "medRxiv Subjects",
                     footer: "Clinical and health science preprints from medrxiv.org",
-                    subjects: medRxivSubjects
+                    subjects: filtered(medRxivSubjects)
                 )
 
                 // ── Refresh ────────────────────────────────────────────────
@@ -309,16 +446,41 @@ struct SettingsPage: View {
                     }
                     .disabled(!canRefresh)
                 } footer: {
-                    if groqAPIKey.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Text("Enter your Groq API key above to enable the feed.")
-                    } else if selectedSubjects.isEmpty {
-                        Text("Select at least one subject above.")
+                    if !hasAISummarization() {
+                        Text("No AI configured. Add a Groq API key above, or use an Apple Intelligence-capable device (A17 Pro / A18 / M-series, iOS 26+).")
+                    } else if selectedSubjects.isEmpty && pubmedSearches.isEmpty {
+                        Text("Select subjects or add a PubMed search above.")
                     } else {
-                        Text("\(selectedSubjects.count) subject\(selectedSubjects.count == 1 ? "" : "s") selected.")
+                        let subjectCount = selectedSubjects.count
+                        let searchCount  = pubmedSearches.count
+                        let parts = [
+                            subjectCount > 0 ? "\(subjectCount) subject\(subjectCount == 1 ? "" : "s")" : nil,
+                            searchCount  > 0 ? "\(searchCount) PubMed search\(searchCount == 1 ? "" : "es")" : nil
+                        ].compactMap { $0 }.joined(separator: " · ")
+                        Text(parts + " configured.")
                     }
                 }
             }
+            .searchable(text: $subjectSearch, prompt: "Search subjects…")
             .navigationTitle("Settings")
+            // Load API keys from Keychain on first appear; migrate any legacy UserDefaults values.
+            .onAppear {
+                KeychainHelper.migrateFromUserDefaults(userDefaultsKey: "groqAPIKey",    keychainKey: "groqAPIKey")
+                KeychainHelper.migrateFromUserDefaults(userDefaultsKey: "pubmedAPIKey",  keychainKey: "pubmedAPIKey")
+                groqAPIKey   = KeychainHelper.load(forKey: "groqAPIKey")   ?? ""
+                pubmedAPIKey = KeychainHelper.load(forKey: "pubmedAPIKey") ?? ""
+            }
+            // Persist changes back to Keychain whenever either field is edited.
+            .onChange(of: groqAPIKey) { _, newValue in
+                let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty { KeychainHelper.delete(forKey: "groqAPIKey") }
+                else               { KeychainHelper.save(trimmed, forKey: "groqAPIKey") }
+            }
+            .onChange(of: pubmedAPIKey) { _, newValue in
+                let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty { KeychainHelper.delete(forKey: "pubmedAPIKey") }
+                else               { KeychainHelper.save(trimmed, forKey: "pubmedAPIKey") }
+            }
         }
     }
 
@@ -345,6 +507,80 @@ struct SettingsPage: View {
         } footer: {
             Text(footer)
         }
+    }
+}
+
+// MARK: - Per-search row with inline filter pickers
+
+struct PubMedSearchRow: View {
+    @Binding var search: PubMedSearch
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Query text
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+                Text(search.query)
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+            }
+
+            // Filter chips — date range + article type
+            HStack(spacing: 8) {
+                // Date range picker
+                Menu {
+                    Picker("Date range", selection: $search.dateRange) {
+                        ForEach(PubMedDateRange.allCases) { range in
+                            Text(range.label).tag(range)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "calendar")
+                            .font(.caption2)
+                        Text(search.dateRange.label)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.blue.opacity(0.1))
+                    .foregroundStyle(.blue)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+
+                // Article type picker
+                Menu {
+                    Picker("Article type", selection: $search.articleType) {
+                        ForEach(PubMedArticleType.allCases) { type in
+                            Text(type.label).tag(type)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.text")
+                            .font(.caption2)
+                        Text(search.articleType.label)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.purple.opacity(0.1))
+                    .foregroundStyle(.purple)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 

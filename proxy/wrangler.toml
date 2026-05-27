@@ -1,0 +1,6 @@
+name = "pubminder-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Run `wrangler secret put GROQ_API_KEY` to store your key — it will NOT appear here.
+# After deploying, Wrangler prints your Worker URL. Copy it into fetchData.swift.

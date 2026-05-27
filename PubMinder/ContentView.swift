@@ -7,6 +7,7 @@ struct ContentView: View {
     @Binding var isLoading: Bool
     var selectedSubjects: Set<String>
     var savedArticles: [Article]
+    var fetchErrors: [String]
     var onSave: (Article) -> Void
     var onRemove: (Article) -> Void
     var onToggleSubject: (String) -> Void
@@ -19,7 +20,9 @@ struct ContentView: View {
                     summaries: $summaries,
                     isLoading: $isLoading,
                     savedArticles: savedArticles,
-                    onSave: onSave
+                    fetchErrors: fetchErrors,
+                    onSave: onSave,
+                    onRefresh: onRefresh
                 )
             }
             Tab("Saved", systemImage: "bookmark.fill") {
