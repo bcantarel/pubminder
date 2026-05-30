@@ -1,4 +1,5 @@
 import SwiftUI
+import StoreKit
 
 // A single subject that can be fetched from either bioRxiv or medRxiv.
 // Storage key format: "biorxiv:genomics" or "medrxiv:oncology"
@@ -126,16 +127,23 @@ struct SettingsPage: View {
     var onRefresh: () -> Void
     var isLoading: Bool
 
+    @EnvironmentObject var store: StoreKitManager
+
     // API keys are stored in the Keychain (not UserDefaults) for security.
     // @State is loaded once from Keychain in .onAppear; writes go back on .onChange.
     @State private var groqAPIKey: String = ""
     @State private var pubmedAPIKey: String = ""
+    @State private var showUpgrade: Bool = false
 
     @AppStorage("filterKeywordsEnabled") private var filterEnabled: Bool = true
     @AppStorage("filterKeywordsRaw")     private var keywordsRaw: String = ""
     @AppStorage("articlesPerSubject")    private var articlesPerSubject: Int = 3
     @AppStorage("pubmedSearchesV2")      private var pubmedSearchesV2Raw: String = ""
     @AppStorage("pubmedSearchesRaw")     private var pubmedSearchesLegacyRaw: String = ""   // read-only for migration
+
+    @AppStorage("digestEnabled") private var digestEnabled: Bool = false
+    @AppStorage("digestHour")    private var digestHour: Int = 8
+    @AppStorage("digestMinute")  private var digestMinute: Int = 0
 
     @State private var isKeyVisible: Bool = false
     @State private var newKeyword: String = ""
@@ -146,6 +154,16 @@ struct SettingsPage: View {
     private func filtered(_ subjects: [FeedSubject]) -> [FeedSubject] {
         guard !subjectSearch.isEmpty else { return subjects }
         return subjects.filter { $0.displayName.localizedCaseInsensitiveContains(subjectSearch) }
+    }
+
+    // Number of preprint subjects currently selected (anything that isn't a PubMed search)
+    private var preprintSubjectCount: Int {
+        selectedSubjects.filter { !$0.hasPrefix("pubmed:") }.count
+    }
+
+    // True if the user has entered an NCBI API key
+    private var hasNCBIKey: Bool {
+        !pubmedAPIKey.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     // Decode the stored JSON array, falling back to defaults on first launch
@@ -238,7 +256,10 @@ struct SettingsPage: View {
 
     private var canRefresh: Bool {
         let hasSource = !selectedSubjects.isEmpty || !pubmedSearches.isEmpty
-        return hasAISummarization() && hasSource && !isLoading
+        // Free users can refresh (they see articles without summaries).
+        // Pro users need AI configured so they don't get a feed of "Summary unavailable."
+        let aiReady = store.isPremium ? hasAISummarization() : true
+        return aiReady && hasSource && !isLoading
     }
 
     var body: some View {
@@ -373,20 +394,36 @@ struct SettingsPage: View {
                     .onDelete(perform: removePubMedSearch)
 
                     // Add new search query
-                    HStack {
-                        TextField("e.g. CRISPR, genomics[MeSH] AND cancer", text: $newPubMedSearch)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .onSubmit { addPubMedSearch() }
-                        Button(action: addPubMedSearch) {
-                            Image(systemName: "plus.circle.fill")
-                                .foregroundStyle(
-                                    newPubMedSearch.trimmingCharacters(in: .whitespaces).isEmpty
-                                    ? Color.blue.opacity(0.3) : Color.blue
-                                )
+                    let atPubMedCap = !store.isPremium && !hasNCBIKey && pubmedSearches.count >= 2
+                    if atPubMedCap {
+                        HStack(spacing: 8) {
+                            Image(systemName: "lock.fill")
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                            Text("Add an NCBI API key below for unlimited searches, or ")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            + Text("upgrade to Pro")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(newPubMedSearch.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .onTapGesture { showUpgrade = true }
+                    } else {
+                        HStack {
+                            TextField("e.g. CRISPR, genomics[MeSH] AND cancer", text: $newPubMedSearch)
+                                .autocorrectionDisabled()
+                                .textInputAutocapitalization(.never)
+                                .onSubmit { addPubMedSearch() }
+                            Button(action: addPubMedSearch) {
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundStyle(
+                                        newPubMedSearch.trimmingCharacters(in: .whitespaces).isEmpty
+                                        ? Color.blue.opacity(0.3) : Color.blue
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(newPubMedSearch.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
                     }
 
                     // Optional NCBI API key (raises rate limit from 3 → 10 req/sec)
@@ -405,6 +442,44 @@ struct SettingsPage: View {
                 } footer: {
                     Text("Enter keyword queries or MeSH terms. Use the date and type menus to narrow each search. Swipe left on a query to delete it.")
                         .font(.footnote)
+                }
+
+                // ── Preprint sources ───────────────────────────────────────
+                // Free users can pick 1 subject from any source.
+                // Pro users get unlimited subjects across all sources.
+                if !store.isPremium && preprintSubjectCount >= 1 {
+                    Section {
+                        Button { showUpgrade = true } label: {
+                            HStack(spacing: 14) {
+                                Image(systemName: "lock.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(
+                                        LinearGradient(
+                                            colors: [.green, .teal],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Upgrade for unlimited subjects")
+                                        .font(.subheadline).fontWeight(.semibold)
+                                        .foregroundColor(.primary)
+                                    Text("1 of 1 free preprint subject used · Pro removes this limit")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 // ── arXiv subjects ─────────────────────────────────────────
@@ -427,6 +502,49 @@ struct SettingsPage: View {
                     footer: "Clinical and health science preprints from medrxiv.org",
                     subjects: filtered(medRxivSubjects)
                 )
+
+                // ── Notifications (Pro only) ───────────────────────────────
+                if store.isPremium {
+                    Section {
+                        Toggle("Daily digest", isOn: $digestEnabled)
+                            .onChange(of: digestEnabled) { _, enabled in
+                                Task {
+                                    if enabled {
+                                        await NotificationManager.shared.requestPermission()
+                                        if NotificationManager.shared.authorizationStatus == .authorized {
+                                            NotificationManager.shared.scheduleDailyDigest(hour: digestHour, minute: digestMinute)
+                                        }
+                                    } else {
+                                        NotificationManager.shared.cancelDailyDigest()
+                                    }
+                                }
+                            }
+                        if digestEnabled {
+                            DatePicker(
+                                "Delivery time",
+                                selection: Binding(
+                                    get: {
+                                        var c = DateComponents()
+                                        c.hour   = digestHour
+                                        c.minute = digestMinute
+                                        return Calendar.current.date(from: c) ?? Date()
+                                    },
+                                    set: { date in
+                                        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+                                        digestHour   = c.hour   ?? 8
+                                        digestMinute = c.minute ?? 0
+                                        NotificationManager.shared.scheduleDailyDigest(hour: digestHour, minute: digestMinute)
+                                    }
+                                ),
+                                displayedComponents: .hourAndMinute
+                            )
+                        }
+                    } header: {
+                        Text("Notifications")
+                    } footer: {
+                        Text("Sends a daily reminder at your chosen time. Tap the notification to open PubMinder and refresh your feed.")
+                    }
+                }
 
                 // ── Refresh ────────────────────────────────────────────────
                 Section {
@@ -463,6 +581,10 @@ struct SettingsPage: View {
             }
             .searchable(text: $subjectSearch, prompt: "Search subjects…")
             .navigationTitle("Settings")
+            .sheet(isPresented: $showUpgrade) {
+                UpgradeView()
+                    .environmentObject(store)
+            }
             // Load API keys from Keychain on first appear; migrate any legacy UserDefaults values.
             .onAppear {
                 KeychainHelper.migrateFromUserDefaults(userDefaultsKey: "groqAPIKey",    keychainKey: "groqAPIKey")
@@ -489,14 +611,27 @@ struct SettingsPage: View {
     private func subjectSection(title: String, footer: String, subjects: [FeedSubject]) -> some View {
         Section {
             ForEach(subjects) { subject in
-                Button(action: { onToggle(subject.id) }) {
+                let isSelected = selectedSubjects.contains(subject.id)
+                let wouldExceedCap = !store.isPremium && !isSelected && preprintSubjectCount >= 1
+                Button(action: {
+                    if wouldExceedCap {
+                        showUpgrade = true
+                    } else {
+                        onToggle(subject.id)
+                    }
+                }) {
                     HStack {
-                        Image(systemName: selectedSubjects.contains(subject.id)
-                              ? "checkmark.square.fill" : "square")
-                            .foregroundStyle(selectedSubjects.contains(subject.id) ? .blue : .secondary)
+                        Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                            .foregroundStyle(isSelected ? .blue : (wouldExceedCap ? .secondary.opacity(0.4) : .secondary))
                             .font(.system(size: 20))
                         Text(subject.displayName)
-                            .foregroundColor(.primary)
+                            .foregroundColor(wouldExceedCap ? .secondary : .primary)
+                        if wouldExceedCap {
+                            Spacer()
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.vertical, 2)
                 }
@@ -591,4 +726,5 @@ struct PubMedSearchRow: View {
         onRefresh: {},
         isLoading: false
     )
+    .environmentObject(StoreKitManager())
 }

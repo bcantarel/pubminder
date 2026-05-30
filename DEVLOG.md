@@ -151,6 +151,101 @@ SettingsPage.swift
 
 ---
 
+## Session 4 — v2 feature set: onboarding, free/pro tiers, UpgradeView (2026-05-30)
+
+### Revised free/pro model
+
+The original model locked all preprint sources (bioRxiv, medRxiv, arXiv) behind the Pro paywall, with a daily cap of 5 AI summaries for free users. After review, this was replaced with a model that gives free users an immediate taste of value:
+
+| | Free (no NCBI key) | Free (with NCBI key) | Pro ($9.99 once) |
+|---|---|---|---|
+| PubMed searches | Max 2 | Unlimited | Unlimited |
+| Preprint subjects | 1 (any source) | 1 (any source) | Unlimited |
+| AI summaries | ❌ | ❌ | ✅ Unlimited |
+| Daily digest | ❌ | ❌ | ✅ |
+
+**Why:** Gating preprints entirely meant free users never saw the app's core value. Letting them pick 1 subject from any source means they experience preprints immediately — the upgrade pitch is "more of this" rather than "pay to see anything." AI summaries are a hard Pro gate (no daily cap) because mid-session cutoffs are frustrating and the cap is hard to communicate. The NCBI key unlocking unlimited PubMed searches is a natural power-user path that doesn't require payment.
+
+---
+
+### OnboardingView.swift — expanded subject presets
+
+Replaced the 3 broad preset cards (Life Sciences / Medicine & Health / AI & Computing) with 10 specific research fields:
+
+Cancer Biology · Immunology · Neuroscience · Genomics & Bioinformatics · AI/ML · Clinical Medicine · Cell & Molecular Biology · Genetics · Microbiology & Infectious Disease · Psychiatry & Neurology
+
+Each maps to 2 curated source slugs. The header was changed from "What's your focus?" to "What field are you in?" The cards `VStack` was wrapped in a `ScrollView` to prevent clipping on smaller phones with 10 options.
+
+**Note on SF Symbols:** some icons used (`microbe.fill`, `figure.mind.and.body`, `helix`, `allergens`) require iOS 16+. Since the target is iOS 26, this is fine.
+
+---
+
+### UpgradeView.swift — revised pitch copy
+
+The headline changed from "Unlock Preprint Sources" to "See more. Read smarter." with a subhead of "One preprint subject is included free. Pro unlocks everything."
+
+Feature rows updated to lead with value over restrictions:
+- Unlimited preprint subjects (bioRxiv, medRxiv, arXiv)
+- AI summaries (on-device or via Groq)
+- Daily digest notification
+- One-time purchase
+
+The nav title changed from "PubMinder Premium" to "Upgrade to Pro". The fallback button label changed from "Unlock Preprints" to "Upgrade to Pro".
+
+---
+
+### SettingsPage.swift — free tier enforcement
+
+**Preprint subject cap:**
+- Added `preprintSubjectCount: Int` — counts selected subjects that don't have the `pubmed:` prefix.
+- The preprint section is now always visible (no more locked banner hiding everything). When `!isPremium && preprintSubjectCount >= 1`, a "1 of 1 free preprint subject used" upgrade banner appears above the subject lists.
+- `subjectSection` updated to detect `wouldExceedCap` per row. Rows that would exceed the cap show a lock icon, are visually dimmed, and open `UpgradeView` instead of toggling.
+
+**PubMed search cap:**
+- Added `hasNCBIKey: Bool` — checks if `pubmedAPIKey` in Keychain is non-empty.
+- When `!isPremium && !hasNCBIKey && pubmedSearches.count >= 2`, the add-search field is replaced with a message: "Add an NCBI API key below for unlimited searches, or upgrade to Pro." Tapping it opens `UpgradeView`.
+
+**Refresh guard:**
+- `canRefresh` previously required `hasAISummarization()` for all users, which blocked free users with no AI key from refreshing. Updated: free users can always refresh if they have a source configured; Pro users still require AI (otherwise every article would show "Summary unavailable.").
+
+---
+
+### fetchData.swift — AI summary hard gate
+
+`summarizeText(inputText:isPremium:)` now accepts `isPremium` and returns `nil` immediately for free users — no AI call is made. Both `fetchAndSummarizeRSSFeed` and `fetchAndSummarizePubMed` accept `isPremium` and pass it through. Free users see "Upgrade to Pro for AI summaries." as the article summary placeholder instead of the old "Summary unavailable."
+
+Removed the old daily counter approach (`summaryDate` / `summaryCount` UserDefaults keys) — never written, so no migration needed.
+
+---
+
+### PubMinderApp.swift — source filter removed
+
+The `premiumSources` constant and the filter that stripped preprint subjects for free users was removed. Subject enforcement now lives entirely in `SettingsPage` (the cap prevents free users from having more than 1 preprint subject in the first place). `isPremium` is passed into both fetch call sites so the summary gate works correctly.
+
+---
+
+### Architecture changes in Session 4
+
+```
+fetchData.swift
+└── summarizeText(inputText:isPremium:)  ← isPremium added; hard gate for free users
+    fetchAndSummarizeRSSFeed(feedURL:source:isPremium:)  ← isPremium threaded through
+    fetchAndSummarizePubMed(_:isPremium:)                ← isPremium threaded through
+
+SettingsPage.swift
+├── preprintSubjectCount: Int  ← new computed var
+├── hasNCBIKey: Bool           ← new computed var
+├── subjectSection()           ← cap enforcement + lock icon per row
+└── canRefresh                 ← free users no longer require AI configured
+
+PubMinderApp.swift
+└── premiumSources + filter removed; isPremium passed to fetch calls
+```
+
+**Remaining in v2 plan:** Change 3 (NotificationManager + daily digest Settings UI + app startup check) and Change 4 (app icon replacement).
+
+---
+
 ## Known issues / future work
 
 - **SSRN** — planned in the roadmap but not yet started. Elsevier's API situation is messy; see ROADMAP.md for details.

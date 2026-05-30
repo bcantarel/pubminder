@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import StoreKit
 
 @main
 struct PubMinderApp: App {
@@ -11,6 +12,12 @@ struct PubMinderApp: App {
     @AppStorage("selectedSubjectsV2")   private var selectedSubjectsRaw: String = "biorxiv:bioinformatics"
     @AppStorage("savedArticlesData")    private var savedArticlesRaw: String = "[]"
     @AppStorage("hasSeenOnboarding")    private var hasSeenOnboarding: Bool = false
+    @AppStorage("digestEnabled")        private var digestEnabled: Bool = false
+    @AppStorage("digestHour")           private var digestHour: Int = 8
+    @AppStorage("digestMinute")         private var digestMinute: Int = 0
+
+    /// Manages the one-time IAP that unlocks preprint sources.
+    @StateObject private var store = StoreKitManager()
 
     @State private var summaries: [Article] = []
     @State private var isLoading: Bool = false
@@ -78,7 +85,10 @@ struct PubMinderApp: App {
         fetchErrors = []   // clear previous errors on each refresh
         isLoading   = true
 
-        let subjects       = Array(selectedSubjects)
+        // All selected subjects are always fetched — free users can have 1 preprint subject.
+        // The summary gate (isPremium) is enforced inside the fetch functions.
+        let allSubjects = Array(selectedSubjects)
+        let subjects = allSubjects
         let pubmedSearches = loadPubMedSearches()
 
         guard !subjects.isEmpty || !pubmedSearches.isEmpty else {
@@ -113,12 +123,12 @@ struct PubMinderApp: App {
                         feedURL = "https://connect.biorxiv.org/biorxiv_xml.php?subject=" + slug
                     }
 
-                    group.addTask { await fetchAndSummarizeRSSFeed(feedURL: feedURL, source: source) }
+                    group.addTask { await fetchAndSummarizeRSSFeed(feedURL: feedURL, source: source, isPremium: store.isPremium) }
                 }
 
                 // ── PubMed keyword searches ──────────────────────────────────
                 for search in pubmedSearches {
-                    group.addTask { await fetchAndSummarizePubMed(search) }
+                    group.addTask { await fetchAndSummarizePubMed(search, isPremium: store.isPremium) }
                 }
 
                 for await outcome in group {
@@ -150,11 +160,23 @@ struct PubMinderApp: App {
                 onToggleSubject: toggleSubject,
                 onRefresh: loadSummaries
             )
+            .environmentObject(store)
             .onAppear {
                 let hasSource = !selectedSubjects.isEmpty || !loadPubMedSearches().isEmpty
                 // Auto-load when onboarding is done, at least one source is selected,
                 // and at least one AI backend is available (Apple Intelligence OR Groq key).
                 if hasSeenOnboarding && hasAISummarization() && hasSource { loadSummaries() }
+
+                // Re-schedule the daily digest on each launch in case the user
+                // revoked and re-granted notification permission in iOS Settings.
+                if digestEnabled && store.isPremium {
+                    Task {
+                        await NotificationManager.shared.refreshStatus()
+                        if NotificationManager.shared.authorizationStatus == .authorized {
+                            NotificationManager.shared.scheduleDailyDigest(hour: digestHour, minute: digestMinute)
+                        }
+                    }
+                }
             }
             .sheet(isPresented: Binding(
                 get:  { !hasSeenOnboarding },

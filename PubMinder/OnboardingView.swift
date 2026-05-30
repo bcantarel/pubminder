@@ -15,24 +15,64 @@ private struct SubjectPreset: Identifiable {
 
 private let subjectPresets: [SubjectPreset] = [
     SubjectPreset(
-        label:    "Life Sciences",
-        icon:     "leaf.fill",
-        color:    .green,
-        subjects: ["biorxiv:bioinformatics", "biorxiv:genomics",
-                   "biorxiv:neuroscience",   "biorxiv:cell_biology"]
-    ),
-    SubjectPreset(
-        label:    "Medicine & Health",
+        label:    "Cancer Biology",
         icon:     "cross.case.fill",
-        color:    .orange,
-        subjects: ["medrxiv:oncology", "medrxiv:cardiovascular_medicine",
-                   "medrxiv:infectious_diseases", "medrxiv:genetic_and_genomic_medicine"]
+        color:    .red,
+        subjects: ["biorxiv:cancer_biology", "medrxiv:oncology"]
     ),
     SubjectPreset(
-        label:    "AI & Computing",
+        label:    "Immunology",
+        icon:     "shield.lefthalf.filled",
+        color:    .orange,
+        subjects: ["biorxiv:immunology", "medrxiv:allergy_and_immunology"]
+    ),
+    SubjectPreset(
+        label:    "Neuroscience",
+        icon:     "brain.head.profile",
+        color:    .purple,
+        subjects: ["biorxiv:neuroscience", "medrxiv:neurology"]
+    ),
+    SubjectPreset(
+        label:    "Genomics & Bioinformatics",
+        icon:     "helix",
+        color:    .green,
+        subjects: ["biorxiv:genomics", "biorxiv:bioinformatics"]
+    ),
+    SubjectPreset(
+        label:    "AI / Machine Learning",
         icon:     "cpu.fill",
         color:    Color(red: 0.1, green: 0.55, blue: 0.6),
-        subjects: ["arxiv:cs.AI", "arxiv:cs.LG", "arxiv:cs.CV", "arxiv:cs.CL"]
+        subjects: ["arxiv:cs.AI", "arxiv:cs.LG", "arxiv:cs.CL"]
+    ),
+    SubjectPreset(
+        label:    "Clinical Medicine",
+        icon:     "stethoscope",
+        color:    .blue,
+        subjects: ["medrxiv:cardiovascular_medicine", "medrxiv:infectious_diseases"]
+    ),
+    SubjectPreset(
+        label:    "Cell & Molecular Biology",
+        icon:     "allergens",
+        color:    .teal,
+        subjects: ["biorxiv:cell_biology", "biorxiv:molecular_biology"]
+    ),
+    SubjectPreset(
+        label:    "Genetics",
+        icon:     "ladybug.fill",
+        color:    Color(red: 0.6, green: 0.3, blue: 0.7),
+        subjects: ["biorxiv:genetics", "medrxiv:genetic_and_genomic_medicine"]
+    ),
+    SubjectPreset(
+        label:    "Microbiology & Infectious Disease",
+        icon:     "microbe.fill",
+        color:    .yellow,
+        subjects: ["biorxiv:microbiology", "medrxiv:infectious_diseases"]
+    ),
+    SubjectPreset(
+        label:    "Psychiatry & Neurology",
+        icon:     "figure.mind.and.body",
+        color:    .indigo,
+        subjects: ["medrxiv:psychiatry_and_clinical_psychology", "medrxiv:neurology"]
     ),
 ]
 
@@ -490,7 +530,7 @@ private struct SubjectPickerPage: View {
                 Image(systemName: "square.grid.2x2.fill")
                     .font(.system(size: 48))
                     .foregroundStyle(.blue)
-                Text("What's your focus?")
+                Text("What field are you in?")
                     .font(.largeTitle).bold()
                 Text("Pick one or more areas. You can always adjust this in Settings.")
                     .font(.subheadline)
@@ -502,6 +542,7 @@ private struct SubjectPickerPage: View {
 
             Spacer()
 
+            ScrollView {
             VStack(spacing: 14) {
                 ForEach(presets) { preset in
                     let selected = selectedPresets.contains(preset.id)
@@ -544,6 +585,7 @@ private struct SubjectPickerPage: View {
                 }
             }
             .padding(.horizontal, 32)
+            } // ScrollView
 
             Spacer()
 

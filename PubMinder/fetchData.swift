@@ -199,7 +199,9 @@ func hasAISummarization() -> Bool {
 
 // Tries on-device Apple Intelligence first (iOS 26+, eligible hardware).
 // Falls back to Groq automatically — no callbacks, just await and get the result.
-func summarizeText(inputText: String) async -> String? {
+// Returns nil immediately for free users — callers show an upgrade prompt instead.
+func summarizeText(inputText: String, isPremium: Bool) async -> String? {
+    guard isPremium else { return nil }
     if #available(iOS 26.0, *) {
         if let result = await summarizeWithAppleAI(inputText: inputText) {
             return result
@@ -247,7 +249,7 @@ private struct FeedFetchError: Error { let message: String }
 // Fetch one RSS or Atom feed and summarize all matching articles in parallel using TaskGroup.
 // `source` is "biorxiv", "medrxiv", or "arxiv" — used to tag each Article and pick the
 // right parser branch (bioRxiv/medRxiv return RSS; arXiv returns Atom).
-func fetchAndSummarizeRSSFeed(feedURL: String, source: String = "biorxiv") async -> FetchOutcome {
+func fetchAndSummarizeRSSFeed(feedURL: String, source: String = "biorxiv", isPremium: Bool = false) async -> FetchOutcome {
     guard let url = URL(string: feedURL) else {
         return FetchOutcome(errorMessage: "Invalid feed URL for \(source).")
     }
@@ -327,12 +329,12 @@ func fetchAndSummarizeRSSFeed(feedURL: String, source: String = "biorxiv") async
         let articles = await withTaskGroup(of: Article.self) { group in
             for candidate in candidates {
                 group.addTask {
-                    let summary = await summarizeText(inputText: candidate.abstract)
+                    let summary = await summarizeText(inputText: candidate.abstract, isPremium: isPremium)
                     return Article(
                         title:   candidate.title,
                         doi:     candidate.identifier,
                         link:    candidate.link,
-                        summary: summary ?? "Summary unavailable.",
+                        summary: summary ?? (isPremium ? "Summary unavailable." : "Upgrade to Pro for AI summaries."),
                         source:  source
                     )
                 }
@@ -414,7 +416,7 @@ struct PubMedSearch: Codable, Identifiable, Equatable {
 //
 // Pass an NCBI API key via UserDefaults key "pubmedAPIKey" to raise rate limits
 // from 3 req/sec to 10 req/sec. Free to obtain at ncbi.nlm.nih.gov/account.
-func fetchAndSummarizePubMed(_ search: PubMedSearch) async -> FetchOutcome {
+func fetchAndSummarizePubMed(_ search: PubMedSearch, isPremium: Bool = false) async -> FetchOutcome {
     let query = search.query.trimmingCharacters(in: .whitespaces)
     guard !query.isEmpty else { return FetchOutcome() }
 
@@ -502,12 +504,12 @@ func fetchAndSummarizePubMed(_ search: PubMedSearch) async -> FetchOutcome {
         for record in candidates {
             group.addTask {
                 let textToSummarize = record.abstract.isEmpty ? record.title : record.abstract
-                let summary = await summarizeText(inputText: textToSummarize)
+                let summary = await summarizeText(inputText: textToSummarize, isPremium: isPremium)
                 return Article(
                     title:   record.title,
                     doi:     record.doi,
                     link:    "https://pubmed.ncbi.nlm.nih.gov/\(record.pmid)/",
-                    summary: summary ?? "Summary unavailable.",
+                    summary: summary ?? (isPremium ? "Summary unavailable." : "Upgrade to Pro for AI summaries."),
                     source:  "pubmed"
                 )
             }
