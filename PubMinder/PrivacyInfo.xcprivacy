@@ -30,7 +30,7 @@
         UserDefaults (NSUserDefaults) — used to store app preferences:
         selected subjects, keyword filters, feed size, onboarding flag,
         saved articles, and PubMed search queries.
-        Reason CA92LXYZ: read/write the app's own defaults (not for tracking).
+        Reason CA92.1: read/write the app's own defaults (not for tracking).
     -->
     <key>NSPrivacyAccessedAPITypes</key>
     <array>
@@ -39,7 +39,7 @@
             <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array>
-                <string>CA92LXYZ</string>
+                <string>CA92.1</string>
             </array>
         </dict>
     </array>
