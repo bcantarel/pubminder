@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — PubMinder</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 2.5rem 1.25rem 4rem;
+    color: #1c1c1e;
+    background: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e5e5e7; background: #1c1c1e; }
+    a { color: #6ab0ff; }
+    th { background: #2c2c2e !important; }
+    td, th { border-color: #3a3a3c !important; }
+  }
+  h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.3rem; margin-top: 2.25rem; border-bottom: 1px solid #d1d1d6; padding-bottom: 0.3rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.5rem; }
+  .updated { color: #8e8e93; font-style: italic; margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95rem; }
+  th, td { border: 1px solid #d1d1d6; padding: 0.5rem 0.7rem; text-align: left; vertical-align: top; }
+  th { background: #f2f2f7; }
+  a { color: #0a6cff; }
+  ul { padding-left: 1.4rem; }
+  code { font-size: 0.95em; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy — PubMinder</h1>
+<p class="updated">Last updated: May 2026</p>
+
+<h2>Overview</h2>
+<p>PubMinder is a research-paper reader that aggregates preprints and journal articles from public scientific databases and generates AI summaries. This policy explains what data the app uses and why.</p>
+
+<h2>Data We Do Not Collect</h2>
+<p>PubMinder does <strong>not</strong>:</p>
+<ul>
+  <li>Collect or store any personally identifiable information</li>
+  <li>Track you across other apps or websites</li>
+  <li>Share any data with advertisers or data brokers</li>
+  <li>Require account creation or sign-in</li>
+</ul>
+
+<h2>Data That Stays on Your Device</h2>
+<p>The following information is stored <strong>locally on your iPhone only</strong> and never transmitted to us:</p>
+<table>
+  <thead>
+    <tr><th>What</th><th>Where stored</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Selected subjects and keyword filters</td><td>UserDefaults</td><td>Remembers your preferences between sessions</td></tr>
+    <tr><td>Saved articles</td><td>UserDefaults</td><td>Lets you access bookmarked papers offline</td></tr>
+    <tr><td>Onboarding completion flag</td><td>UserDefaults</td><td>Skips the welcome screens on relaunch</td></tr>
+    <tr><td>Feed size setting</td><td>UserDefaults</td><td>Controls how many articles to fetch</td></tr>
+    <tr><td>PubMed search queries</td><td>UserDefaults</td><td>Saves your saved searches</td></tr>
+    <tr><td>Groq API key</td><td>iOS Keychain (encrypted)</td><td>Authenticates requests to Groq on your behalf</td></tr>
+    <tr><td>NCBI API key</td><td>iOS Keychain (encrypted)</td><td>Optional higher-rate PubMed access</td></tr>
+  </tbody>
+</table>
+<p>API keys are stored in the iOS Keychain — an encrypted, device-bound store that is excluded from iCloud backups.</p>
+
+<h2>Third-Party Services</h2>
+<p>PubMinder connects to the following external services <strong>on your behalf</strong>:</p>
+
+<h3>Scientific Databases (read-only, no authentication)</h3>
+<ul>
+  <li><strong>bioRxiv</strong> (Cold Spring Harbor Laboratory) — preprint RSS feeds</li>
+  <li><strong>medRxiv</strong> (Cold Spring Harbor Laboratory / BMJ) — preprint RSS feeds</li>
+  <li><strong>arXiv</strong> (Cornell University) — preprint Atom feeds</li>
+  <li><strong>PubMed / NCBI E-utilities</strong> (National Institutes of Health) — journal article search and abstracts</li>
+</ul>
+<p>These are publicly accessible APIs. PubMinder sends only the subject/search queries you configure. No personal information is transmitted.</p>
+
+<h3>AI Summarization</h3>
+<ul>
+  <li><strong>Groq</strong> (groq.com) — if you supply a Groq API key, PubMinder sends the text of scientific abstracts to Groq's API to generate 2–3 sentence summaries. Your API key is transmitted to Groq over HTTPS. Groq's own privacy policy applies: <a href="https://groq.com/privacy">groq.com/privacy</a></li>
+  <li><strong>Apple Intelligence</strong> (on-device) — if your device supports Apple Intelligence (A17 Pro or later, iOS 26+), PubMinder can summarize abstracts entirely on-device using Apple's Foundation Models framework. No data leaves your device via this path.</li>
+</ul>
+
+<h2>Children's Privacy</h2>
+<p>PubMinder is intended for researchers, students, and anyone interested in scientific literature. It does not knowingly collect data from children under 13.</p>
+
+<h2>Changes to This Policy</h2>
+<p>If this policy changes materially, we will update the "Last updated" date above. Continued use of the app constitutes acceptance of the updated policy.</p>
+
+<h2>Contact</h2>
+<p>Questions about this privacy policy? Email: <strong><a href="mailto:genome.school@gmail.com">genome.school@gmail.com</a></strong></p>
+
+</body>
+</html>
