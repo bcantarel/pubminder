@@ -20,7 +20,7 @@ import SwiftUI
 final class StoreKitManager: ObservableObject {
 
     // The product ID must exactly match what you enter in App Store Connect.
-    static let premiumProductID = "com.pubminder.preprints"
+    nonisolated static let premiumProductID = "com.pubminder.preprints"
 
     // MARK: Published state
 
@@ -36,6 +36,9 @@ final class StoreKitManager: ObservableObject {
 
     /// True while a purchase or restore is in flight.
     @Published private(set) var isWorking: Bool = false
+
+    /// True while the product list is being fetched from the App Store.
+    @Published private(set) var isLoadingProducts: Bool = false
 
     // MARK: Private
 
@@ -63,25 +66,25 @@ final class StoreKitManager: ObservableObject {
     /// Load the premium product from the App Store.
     /// Called automatically on init; can be called again to retry on failure.
     func loadProducts() async {
+        isLoadingProducts = true
+        defer { isLoadingProducts = false }
         do {
             let products = try await Product.products(for: [Self.premiumProductID])
             product = products.first
             if product == nil {
-                print("StoreKit: product '\(Self.premiumProductID)' not found. " +
-                      "Check that it is created in App Store Connect and " +
-                      "that you are signed in to a Sandbox account on device.")
+                purchaseError = "Product not found in App Store. Check your internet connection and try again."
             }
         } catch {
-            print("StoreKit: loadProducts error — \(error.localizedDescription)")
+            purchaseError = "Could not load product: \(error.localizedDescription)"
         }
     }
 
     /// Initiate a purchase of the premium unlock.
     func purchase() async {
-        guard let product else {
-            purchaseError = "Product not available. Check your internet connection and try again."
-            return
+        if product == nil {
+            await loadProducts()
         }
+        guard let product else { return }
         purchaseError = nil
         isWorking = true
         defer { isWorking = false }
@@ -91,13 +94,18 @@ final class StoreKitManager: ObservableObject {
             switch result {
             case .success(let verification):
                 let transaction = try checkVerified(verification)
-                await updatePurchaseStatus()
+                // Set isPremium immediately from the verified transaction rather than
+                // waiting for updatePurchaseStatus(), which queries currentEntitlements —
+                // that async sequence can lag briefly after a fresh purchase and would
+                // reset isPremium to false before the entitlement propagates.
+                isPremium = true
                 await transaction.finish()
             case .userCancelled:
                 break   // User dismissed the sheet — nothing to do
             case .pending:
-                // Ask-to-Buy or other deferred state — transaction will arrive via listener
-                break
+                // Ask-to-Buy, parental controls, or payment method issue —
+                // the transaction will arrive via the listener when approved.
+                purchaseError = "Your purchase is pending. You'll receive a notification when it's approved."
             @unknown default:
                 break
             }
@@ -143,11 +151,25 @@ final class StoreKitManager: ObservableObject {
             for await result in Transaction.updates {
                 guard let self else { return }
                 if case .verified(let transaction) = result {
-                    await self.updatePurchaseStatus()
+                    if transaction.productID == StoreKitManager.premiumProductID {
+                        if transaction.revocationDate == nil {
+                            // Active entitlement: set isPremium directly without scanning
+                            // currentEntitlements, which can lag behind a fresh transaction
+                            // and would otherwise race-reset isPremium to false.
+                            await self.setPremium(true)
+                        } else {
+                            // Revocation/refund: full scan to properly clear the entitlement.
+                            await self.updatePurchaseStatus()
+                        }
+                    }
                     await transaction.finish()
                 }
             }
         }
+    }
+
+    private func setPremium(_ value: Bool) {
+        isPremium = value
     }
 
     /// Unwrap a VerificationResult, throwing if the JWS signature is invalid.

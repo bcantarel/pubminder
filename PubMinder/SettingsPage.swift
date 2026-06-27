@@ -581,9 +581,17 @@ struct SettingsPage: View {
             }
             .searchable(text: $subjectSearch, prompt: "Search subjects…")
             .navigationTitle("Settings")
-            .sheet(isPresented: $showUpgrade) {
+            .sheet(isPresented: $showUpgrade, onDismiss: {
+                // Re-check entitlements when the sheet closes in case a purchase
+                // completed but the in-app observer missed the update.
+                Task { await store.updatePurchaseStatus() }
+            }) {
                 UpgradeView()
                     .environmentObject(store)
+            }
+            // Reload the feed immediately after a purchase so premium content appears without a manual refresh.
+            .onChange(of: store.isPremium) { _, newValue in
+                if newValue { onRefresh() }
             }
             // Load API keys from Keychain on first appear; migrate any legacy UserDefaults values.
             .onAppear {

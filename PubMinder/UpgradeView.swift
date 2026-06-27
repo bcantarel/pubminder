@@ -68,42 +68,27 @@ struct UpgradeView: View {
                     .cornerRadius(14)
                     .padding(.horizontal)
 
-                    // ── Error banner ──────────────────────────────────────
-                    if let error = store.purchaseError {
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                            Text(error)
-                                .font(.subheadline)
-                                .foregroundColor(.primary)
-                            Spacer()
-                        }
-                        .padding(12)
-                        .background(Color.orange.opacity(0.1))
-                        .cornerRadius(10)
-                        .overlay(RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.orange.opacity(0.3), lineWidth: 1))
-                        .padding(.horizontal)
-                    }
-
                     // ── Purchase button ───────────────────────────────────
                     VStack(spacing: 12) {
                         Button {
                             Task { await store.purchase() }
                         } label: {
                             HStack(spacing: 8) {
-                                if store.isWorking {
+                                if store.isWorking || store.isLoadingProducts {
                                     ProgressView()
                                         .tint(.white)
                                         .padding(.trailing, 4)
                                 } else {
                                     Image(systemName: "lock.open.fill")
                                 }
-                                if let product = store.product {
+                                if store.isLoadingProducts {
+                                    Text("Loading…")
+                                        .fontWeight(.semibold)
+                                } else if let product = store.product {
                                     Text("Unlock for \(product.displayPrice)")
                                         .fontWeight(.semibold)
                                 } else {
-                                    Text("Upgrade to Pro")
+                                    Text("Tap to Retry")
                                         .fontWeight(.semibold)
                                 }
                             }
@@ -119,7 +104,7 @@ struct UpgradeView: View {
                             .foregroundColor(.white)
                             .cornerRadius(14)
                         }
-                        .disabled(store.isWorking)
+                        .disabled(store.isWorking || store.isLoadingProducts)
                         .padding(.horizontal)
 
                         // Restore purchases (required by App Store guidelines)
@@ -149,6 +134,14 @@ struct UpgradeView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }
+            }
+            .alert("Purchase Issue", isPresented: Binding(
+                get: { store.purchaseError != nil },
+                set: { if !$0 { store.purchaseError = nil } }
+            )) {
+                Button("OK") { store.purchaseError = nil }
+            } message: {
+                Text(store.purchaseError ?? "")
             }
             // Auto-dismiss as soon as the purchase goes through
             .onChange(of: store.isPremium) { _, newValue in
