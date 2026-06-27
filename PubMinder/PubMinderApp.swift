@@ -81,14 +81,16 @@ struct PubMinderApp: App {
     }
 
     func loadSummaries() {
+        guard !isLoading else { return }
         summaries   = []
         fetchErrors = []   // clear previous errors on each refresh
         isLoading   = true
 
-        // All selected subjects are always fetched — free users can have 1 preprint subject.
-        // The summary gate (isPremium) is enforced inside the fetch functions.
-        let allSubjects = Array(selectedSubjects)
-        let subjects = allSubjects
+        // Snapshot isPremium now, on the main actor, so async task closures below
+        // all see the same value even if StoreKit updates isPremium mid-flight.
+        let isPremium = store.isPremium
+
+        let subjects = Array(selectedSubjects)
         let pubmedSearches = loadPubMedSearches()
 
         guard !subjects.isEmpty || !pubmedSearches.isEmpty else {
@@ -123,12 +125,12 @@ struct PubMinderApp: App {
                         feedURL = "https://connect.biorxiv.org/biorxiv_xml.php?subject=" + slug
                     }
 
-                    group.addTask { await fetchAndSummarizeRSSFeed(feedURL: feedURL, source: source, isPremium: store.isPremium) }
+                    group.addTask { await fetchAndSummarizeRSSFeed(feedURL: feedURL, source: source, isPremium: isPremium) }
                 }
 
                 // ── PubMed keyword searches ──────────────────────────────────
                 for search in pubmedSearches {
-                    group.addTask { await fetchAndSummarizePubMed(search, isPremium: store.isPremium) }
+                    group.addTask { await fetchAndSummarizePubMed(search, isPremium: isPremium) }
                 }
 
                 for await outcome in group {
@@ -176,6 +178,15 @@ struct PubMinderApp: App {
                             NotificationManager.shared.scheduleDailyDigest(hour: digestHour, minute: digestMinute)
                         }
                     }
+                }
+            }
+            // When premium status is confirmed after app launch (StoreKit verification
+            // completes asynchronously), reload so articles get real AI summaries
+            // instead of the "Upgrade to Pro" placeholder from the initial load.
+            .onChange(of: store.isPremium) { _, newValue in
+                if newValue {
+                    let hasSource = !selectedSubjects.isEmpty || !loadPubMedSearches().isEmpty
+                    if hasSeenOnboarding && hasAISummarization() && hasSource { loadSummaries() }
                 }
             }
             .sheet(isPresented: Binding(

@@ -263,7 +263,7 @@ struct SettingsPage: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 // Note: API key state is loaded from Keychain in .onAppear below.
 
@@ -581,11 +581,7 @@ struct SettingsPage: View {
             }
             .searchable(text: $subjectSearch, prompt: "Search subjects…")
             .navigationTitle("Settings")
-            .sheet(isPresented: $showUpgrade, onDismiss: {
-                // Re-check entitlements when the sheet closes in case a purchase
-                // completed but the in-app observer missed the update.
-                Task { await store.updatePurchaseStatus() }
-            }) {
+            .sheet(isPresented: $showUpgrade) {
                 UpgradeView()
                     .environmentObject(store)
             }

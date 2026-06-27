@@ -30,8 +30,10 @@ struct SummaryPage: View {
         }
     }
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if isLoading && summaries.isEmpty {
                     VStack(spacing: 12) {
@@ -134,12 +136,28 @@ struct SummaryPage: View {
                             }
 
                             // ── Article cards ────────────────────────────────
-                            ForEach(filteredSummaries) { article in
-                                ArticleCard(
-                                    article: article,
-                                    isSaved: savedArticles.contains(article),
-                                    onSave: { onSave(article) }
-                                )
+                            if horizontalSizeClass == .regular {
+                                LazyVGrid(
+                                    columns: [GridItem(.flexible()), GridItem(.flexible())],
+                                    spacing: 16
+                                ) {
+                                    ForEach(filteredSummaries) { article in
+                                        ArticleCard(
+                                            article: article,
+                                            isSaved: savedArticles.contains(article),
+                                            onSave: { onSave(article) }
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal)
+                            } else {
+                                ForEach(filteredSummaries) { article in
+                                    ArticleCard(
+                                        article: article,
+                                        isSaved: savedArticles.contains(article),
+                                        onSave: { onSave(article) }
+                                    )
+                                }
                             }
                         }
                         .padding(.vertical)

@@ -6,7 +6,7 @@ struct SavedPage: View {
     var onRemove: (Article) -> Void
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if savedArticles.isEmpty {
                     VStack(spacing: 12) {

@@ -105,10 +105,30 @@ func extractArxivID(from link: String) -> String {
 // The system prompt shared by both AI backends.
 private let summarizationSystemPrompt = "You are a graduate research assistant. Summarize the following scientific abstract for your peers in 2–3 sentences. Be specific about the key finding."
 
-// MARK: - Apple Intelligence (on-device, iOS 18+)
+// MARK: - Apple Intelligence (on-device, iOS 26+)
+
+// The on-device model is a shared hardware resource — concurrent LanguageModelSession.respond()
+// calls from different sessions fail with GenerationError.concurrentRequests.
+// This actor queues callers so only one Apple AI call runs at a time.
+@available(iOS 26.0, *)
+private actor AppleAISerializer {
+    static let shared = AppleAISerializer()
+    private var isBusy = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func waitForTurn() async {
+        guard isBusy else { isBusy = true; return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func releaseTurn() {
+        if let next = waiting.first { waiting.removeFirst(); next.resume() }
+        else { isBusy = false }
+    }
+}
 
 // Tries to summarize using the on-device Foundation Models framework.
-// Returns nil if Apple Intelligence is unavailable or the device isn't eligible,
+// Returns nil if Apple Intelligence is unavailable or the call fails,
 // so the caller can fall back to Groq.
 @available(iOS 26.0, *)
 func summarizeWithAppleAI(inputText: String) async -> String? {
@@ -116,7 +136,7 @@ func summarizeWithAppleAI(inputText: String) async -> String? {
     guard model.availability == .available else {
         switch model.availability {
         case .unavailable(.deviceNotEligible):
-            print("Apple AI: device not eligible (requires A17 Pro / M1 or later).")
+            print("Apple AI: device not eligible (requires A17 Pro / A18 / M-series or later).")
         case .unavailable(.appleIntelligenceNotEnabled):
             print("Apple AI: Apple Intelligence is off — enable it in Settings → Apple Intelligence.")
         case .unavailable(.modelNotReady):
@@ -127,11 +147,45 @@ func summarizeWithAppleAI(inputText: String) async -> String? {
         return nil
     }
 
+    // Wait for exclusive access — the on-device model can't run concurrently.
+    await AppleAISerializer.shared.waitForTurn()
+    defer { Task { await AppleAISerializer.shared.releaseTurn() } }
+
     let session = LanguageModelSession(instructions: summarizationSystemPrompt)
     do {
         let response = try await session.respond(to: inputText)
         print("Apple AI: summarized successfully (on-device).")
         return response.content
+    } catch let error as LanguageModelSession.GenerationError {
+        switch error {
+        case .concurrentRequests:
+            print("Apple AI: concurrent request error — serializer should have prevented this.")
+        case .guardrailViolation:
+            print("Apple AI: content policy triggered — skipping abstract.")
+        case .exceededContextWindowSize:
+            // Retry with a truncated abstract before giving up.
+            let truncated = String(inputText.prefix(3000))
+            let retrySession = LanguageModelSession(instructions: summarizationSystemPrompt)
+            if let retryResponse = try? await retrySession.respond(to: truncated) {
+                return retryResponse.content
+            }
+            print("Apple AI: abstract still too long after truncation.")
+        case .assetsUnavailable:
+            print("Apple AI: model assets unavailable — may be updating.")
+        case .decodingFailure:
+            print("Apple AI: response decoding failed.")
+        case .rateLimited:
+            print("Apple AI: rate limited (only occurs when running in the background).")
+        case .refusal:
+            print("Apple AI: model refused the request.")
+        case .unsupportedGuide:
+            print("Apple AI: unsupported generation guide.")
+        case .unsupportedLanguageOrLocale:
+            print("Apple AI: unsupported language or locale.")
+        @unknown default:
+            print("Apple AI: unrecognised GenerationError — code \((error as NSError).code).")
+        }
+        return nil
     } catch {
         print("Apple AI error: \(error.localizedDescription)")
         return nil
