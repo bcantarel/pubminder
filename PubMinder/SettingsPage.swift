@@ -136,7 +136,7 @@ struct SettingsPage: View {
     @State private var showUpgrade: Bool = false
 
     @AppStorage("filterKeywordsEnabled") private var filterEnabled: Bool = true
-    @AppStorage("filterKeywordsRaw")     private var keywordsRaw: String = ""
+    @AppStorage("filterKeywordsRawfilterKeywordsRaw")     private var keywordsRaw: String = ""
     @AppStorage("articlesPerSubject")    private var articlesPerSubject: Int = 3
     @AppStorage("pubmedSearchesV2")      private var pubmedSearchesV2Raw: String = ""
     @AppStorage("pubmedSearchesRaw")     private var pubmedSearchesLegacyRaw: String = ""   // read-only for migration

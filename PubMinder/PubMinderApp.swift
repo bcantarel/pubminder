@@ -9,7 +9,7 @@ import StoreKit
 @main
 struct PubMinderApp: App {
     // Comma-separated selected subjects in "source:slug" format, e.g. "biorxiv:genomics,medrxiv:oncology"
-    @AppStorage("selectedSubjectsV2")   private var selectedSubjectsRaw: String = "biorxiv:bioinformatics"
+    @AppStorage("selectedSubjectsV2")   private var selectedSubjectsRaw: String = ""
     @AppStorage("savedArticlesData")    private var savedArticlesRaw: String = "[]"
     @AppStorage("hasSeenOnboarding")    private var hasSeenOnboarding: Bool = false
     @AppStorage("digestEnabled")        private var digestEnabled: Bool = false
@@ -22,6 +22,7 @@ struct PubMinderApp: App {
     @State private var summaries: [Article] = []
     @State private var isLoading: Bool = false
     @State private var fetchErrors: [String] = []
+    @State private var loadTask: Task<Void, Never>?
 
     // MARK: - Computed helpers
 
@@ -81,9 +82,11 @@ struct PubMinderApp: App {
     }
 
     func loadSummaries() {
-        guard !isLoading else { return }
+        // Cancel any in-flight load so a fresh call (e.g. after premium is confirmed
+        // asynchronously by StoreKit) always wins with the correct isPremium value.
+        loadTask?.cancel()
         summaries   = []
-        fetchErrors = []   // clear previous errors on each refresh
+        fetchErrors = []
         isLoading   = true
 
         // Snapshot isPremium now, on the main actor, so async task closures below
@@ -98,7 +101,7 @@ struct PubMinderApp: App {
             return
         }
 
-        Task {
+        loadTask = Task {
             // All RSS/Atom feeds AND PubMed queries run in a single parallel TaskGroup.
             // Each FetchOutcome is unpacked: articles go to the feed, errors go to the banner.
             await withTaskGroup(of: FetchOutcome.self) { group in
@@ -134,6 +137,8 @@ struct PubMinderApp: App {
                 }
 
                 for await outcome in group {
+                    // Skip stale results if this load was superseded by a newer call.
+                    guard !Task.isCancelled else { continue }
                     await MainActor.run {
                         summaries.append(contentsOf: outcome.articles)
                         if let msg = outcome.errorMessage, !fetchErrors.contains(msg) {
@@ -143,7 +148,11 @@ struct PubMinderApp: App {
                 }
             }
 
-            await MainActor.run { isLoading = false }
+            // Only clear the loading flag if this task wasn't cancelled.
+            // The replacement task that cancelled us manages isLoading itself.
+            if !Task.isCancelled {
+                await MainActor.run { isLoading = false }
+            }
         }
     }
 

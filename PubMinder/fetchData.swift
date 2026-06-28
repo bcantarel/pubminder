@@ -55,10 +55,7 @@ var groqAPIKey: String {
 }
 
 // Default keywords used on first launch before the user configures their own.
-let defaultKeywords = [
-    "genomics", "AI", "transcriptomics",
-    "bioinformatics", "gene", "expression", "regulation"
-]
+let defaultKeywords = ["cancer","model"]
 
 // Returns true if the article abstract passes the keyword filter.
 // Reads filter settings from UserDefaults so the user can configure them in Settings.
@@ -307,7 +304,20 @@ func fetchAndSummarizeRSSFeed(feedURL: String, source: String = "biorxiv", isPre
     guard let url = URL(string: feedURL) else {
         return FetchOutcome(errorMessage: "Invalid feed URL for \(source).")
     }
-    let parser = FeedParser(URL: url)
+
+    // Fetch the raw bytes ourselves — FeedParser(URL:) misinterprets https:// URLs as local
+    // file paths on iOS 26, producing "The file couldn't be opened" errors.
+    let feedData: Data
+    do {
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.setValue("PubMinder/1.0 (iOS; +https://apps.apple.com)", forHTTPHeaderField: "User-Agent")
+        let (data, _) = try await URLSession.shared.data(for: request)
+        feedData = data
+    } catch {
+        return FetchOutcome(errorMessage: friendlyNetworkError(error, source: source))
+    }
+
+    let parser = FeedParser(data: feedData)
     let articleLimit = max(1, UserDefaults.standard.integer(forKey: "articlesPerSubject") > 0
                           ? UserDefaults.standard.integer(forKey: "articlesPerSubject") : 3)
 
